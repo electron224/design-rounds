@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import AttemptAction from "@/components/AttemptAction";
 import TimerConfig from "@/components/TimerConfig";
+import TwistCards from "@/components/TwistCards";
 import { getSessionUser } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { problemBySlug, trackNeighbors } from "@/lib/problems";
@@ -74,6 +75,24 @@ export default async function ProblemDetail({
       </div>
 
       <div className="mt-4 rounded-md border bg-white p-4 dark:bg-zinc-900">
+        <h2 className="font-semibold">Ask first — strong candidates open with these</h2>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Stage 0 is graded on questions that would change the design. Read
+          each one, guess <em>why</em> it matters, then expand.
+        </p>
+        <div className="mt-2 space-y-2">
+          {p.expectedQuestions.map((q) => (
+            <details key={q.question} className="rounded-md border p-2 text-sm dark:border-zinc-700">
+              <summary className="cursor-pointer font-medium">{q.question}</summary>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                <strong>Why it matters:</strong> {q.why}
+              </p>
+            </details>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-md border bg-white p-4 dark:bg-zinc-900">
         <h2 className="font-semibold">Start practice — configure timer</h2>
         <div className="mt-2">
           <AttemptAction
@@ -88,6 +107,36 @@ export default async function ProblemDetail({
           Type any duration (1–240 min) or pick a quick preset. It can also be
           passed as <code>?t=50</code> in the practice URL.
         </p>
+      </div>
+
+      <div className="mt-4 rounded-md border bg-white p-4 dark:bg-zinc-900">
+        <h2 className="font-semibold">How a strong answer thinks — revealed after you submit</h2>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Peek if you must, but these land 10× harder after your own attempt.
+          The practice room shows them stage by stage.
+        </p>
+        <ol className="mt-2 space-y-1 text-sm">
+          {p.decisions.map((d, i) => (
+            <li key={i} className="flex gap-2">
+              <span
+                aria-hidden
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-[10px] font-bold text-paper dark:bg-chalk dark:text-ink"
+              >
+                {i + 1}
+              </span>
+              <span>{d}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <div className="mt-4">
+        <h2 className="font-semibold">Interviewer twists — requirements change mid-round</h2>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          The follow-ups interviewers actually ask next. Attempt them against
+          your design before peeking at the hint.
+        </p>
+        <TwistCards twists={p.followUps} />
       </div>
 
       <div className="mt-4 rounded-md border bg-white p-4 dark:bg-zinc-900">
