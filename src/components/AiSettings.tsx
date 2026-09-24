@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LLM_PROVIDERS,
   isValidModel,
@@ -48,10 +48,19 @@ function saveAiConfig(cfg: AiConfig | null) {
   }
 }
 
+interface VaultInfo {
+  provider: string;
+  model: string;
+  last4: string;
+}
+
 /** Bring-your-own-key for hosted deploys: provider + model + key. */
 export default function AiSettings({ onChange }: { onChange?: () => void }) {
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState<AiConfig | null>(() => loadAiConfig());
+  // Server vault (logged-in accounts): null = guest/unknown, info = saved.
+  const [vaultAccount, setVaultAccount] = useState(false);
+  const [vault, setVault] = useState<VaultInfo | null>(null);
   const [providerId, setProviderId] = useState(
     saved?.provider ?? LLM_PROVIDERS[1].id
   );
@@ -66,7 +75,26 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
     providerById(providerId) ?? LLM_PROVIDERS[1];
   const effectiveModel = custom ? model.trim() : model || provider.defaultModel;
 
-  const save = () => {
+  // Logged-in accounts keep the key encrypted on the server (write-only) —
+  // the browser then sends nothing per grading request. Guests keep the
+  // localStorage flow. Runs once; failures mean guest mode.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/keys")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (!live || !s || s.disabled) return;
+        setVaultAccount(true);
+        if (s.saved)
+          setVault({ provider: s.provider, model: s.model, last4: s.last4 });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const save = async () => {
     if (!key.trim()) {
       setError("Paste an API key first.");
       return;
@@ -75,16 +103,54 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
       setError("Pick a model from the list or type a valid model id.");
       return;
     }
-    const cfg = { provider: provider.id, key: key.trim(), model: effectiveModel };
-    saveAiConfig(cfg);
-    setSaved(cfg);
+    if (vaultAccount) {
+      try {
+        const res = await fetch("/api/keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: provider.id,
+            key: key.trim(),
+            model: effectiveModel
+          })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.saved) {
+          setError(data?.error ?? "Could not save to the server vault.");
+          return;
+        }
+        setVault({
+          provider: data.provider,
+          model: data.model,
+          last4: data.last4
+        });
+        // Single source of truth — a stale browser copy would shadow the vault.
+        saveAiConfig(null);
+        setSaved(null);
+      } catch {
+        setError("Could not reach this app's server.");
+        return;
+      }
+    } else {
+      const cfg = { provider: provider.id, key: key.trim(), model: effectiveModel };
+      saveAiConfig(cfg);
+      setSaved(cfg);
+    }
     setKey("");
     setError("");
     setOpen(false);
     onChange?.();
   };
 
-  const clear = () => {
+  const clear = async () => {
+    if (vault) {
+      try {
+        await fetch("/api/keys", { method: "DELETE" });
+      } catch {
+        /* row stays — status refetch on next mount shows it */
+      }
+      setVault(null);
+    }
     saveAiConfig(null);
     setSaved(null);
     setKey("");
@@ -127,29 +193,34 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
     }
   };
 
+  const badge = vault ?? saved;
+  const badgeLabel = vault
+    ? `${providerById(vault.provider)?.label} · ${vault.model} · server ${vault.last4}`
+    : saved
+      ? `${providerById(saved.provider)?.label} ${saved.model}`
+      : null;
+
   return (
     <div className="flex items-center gap-2 text-xs">
       <span
         // Text depends on the browser-stored key: server and first client
         // paint may legitimately differ here.
         suppressHydrationWarning
-        className={`rounded-full px-2 py-0.5 ${saved ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}
+        className={`rounded-full px-2 py-0.5 ${badge ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}
         title={
-          saved
-            ? `AI reviews via ${providerById(saved.provider)?.label} ${saved.model}`
+          badge
+            ? `AI reviews via ${badgeLabel}`
             : "Built-in static rubric — add your own key for AI reviews"
         }
       >
-        {saved
-          ? `AI: ${providerById(saved.provider)?.label} · ${saved.model}`
-          : "AI: static rubric"}
+        {badge ? `AI: ${badgeLabel}` : "AI: static rubric"}
       </span>
       <button
         suppressHydrationWarning
         onClick={() => setOpen((o) => !o)}
         className="rounded border bg-white px-2 py-0.5 hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800"
       >
-        {open ? "Hide" : saved ? "Change key" : "Use my key"}
+        {open ? "Hide" : badge ? "Change key" : "Use my key"}
       </button>
       {open && (
         <span className="flex flex-wrap items-center gap-2 rounded-md border bg-white p-2 dark:bg-zinc-900">
@@ -200,10 +271,10 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
             className="w-52 rounded border bg-white px-2 py-1 font-mono dark:bg-zinc-800"
           />
           <button
-            onClick={save}
+            onClick={() => void save()}
             className="rounded bg-indigo-600 px-2 py-1 font-semibold text-white hover:bg-indigo-500"
           >
-            Save
+            Save{vaultAccount ? " to server" : ""}
           </button>
           <button
             onClick={runTest}
@@ -213,9 +284,9 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
           >
             {testing ? "Testing…" : "Test"}
           </button>
-          {saved && (
+          {badge && (
             <button
-              onClick={clear}
+              onClick={() => void clear()}
               className="rounded border px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             >
               Remove
@@ -236,8 +307,9 @@ export default function AiSettings({ onChange }: { onChange?: () => void }) {
             </span>
           )}
           <span className="w-full text-[11px] text-zinc-500 dark:text-zinc-400">
-            Key stays in this browser only — sent with each grading request over
-            HTTPS, never stored server-side. Clear it on shared machines.
+            {vaultAccount
+              ? "Key is encrypted on this server — the browser sends nothing per review. Remove revokes it instantly."
+              : "Key stays in this browser only — sent with each grading request over HTTPS, never stored server-side. Clear it on shared machines."}
           </span>
         </span>
       )}

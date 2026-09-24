@@ -6,6 +6,7 @@ import { problemBySlug } from "@/lib/problems";
 import { checkLimit, clientIp, rateLimited } from "@/lib/ratelimit";
 import { getUserId } from "@/lib/auth";
 import { ensureAttempt, getDb, nowSql } from "@/lib/db";
+import { decryptKey, vaultEnabled } from "@/lib/keyvault";
 import { nanoid } from "nanoid";
 
 const Body = z.object({
@@ -38,6 +39,32 @@ export async function POST(req: NextRequest) {
   if (!problem)
     return NextResponse.json({ error: "Unknown problem" }, { status: 404 });
 
+  // Key resolution: vault (logged-in savers, browser sends nothing) →
+  // transient BYOK (guests) → owner env → static. First hit wins.
+  let config = llm;
+  if (!config && vaultEnabled()) {
+    try {
+      const vaultUser = await getUserId().catch(() => null);
+      if (vaultUser) {
+        const db = await getDb();
+        const row = (await db.get(
+          "SELECT provider, model, cipher FROM user_llm_keys WHERE userId = ?",
+          vaultUser
+        )) as
+          | { provider: string; model: string; cipher: string }
+          | undefined;
+        if (row)
+          config = {
+            provider: row.provider,
+            model: row.model,
+            key: decryptKey(row.cipher, vaultUser, row.provider)
+          };
+      }
+    } catch {
+      /* vault miss or bad row — fall through to owner/static */
+    }
+  }
+
   // Prior stages' verdicts give the model the full attempt context, so later
   // stages are judged on coherence too — not in isolation.
   let history: StageHistory[] = [];
@@ -68,7 +95,7 @@ export async function POST(req: NextRequest) {
   }
 
   const feedback = await gradeStage(problem, stage, payload, {
-    config: llm,
+    config,
     history
   });
 

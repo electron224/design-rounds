@@ -4,8 +4,13 @@ import path from "path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { getUserId } from "@/lib/auth";
+import { encryptKey } from "@/lib/keyvault";
 import { POST } from "./route";
 import { GET as GET_ATTEMPTS } from "../attempts/route";
+
+vi.mock("@/lib/auth", () => ({ getUserId: vi.fn().mockResolvedValue(null) }));
+const mockUserId = vi.mocked(getUserId);
 
 // Isolated temp DB — never touches the developer's data/lld.db.
 // (getDb reads LLD_DB_PATH lazily, so setting it here is sufficient.)
@@ -13,6 +18,8 @@ process.env.LLD_DB_PATH = path.join(
   os.tmpdir(),
   `lld-test-${process.pid}-${Date.now()}.db`
 );
+process.env.KEYVAULT_SECRET =
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 afterAll(async () => {
   try {
@@ -136,5 +143,50 @@ describe("POST /api/feedback (integration: route + rubric + sqlite)", () => {
     expect(data.feedback.provider).toBe("static");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(data.attemptId).toBeTruthy();
+  });
+
+  it("grades from the server vault without any client key", async () => {
+    const db = await getDb();
+    await db.run(
+      "INSERT OR IGNORE INTO users (id, name, email, passwordHash) VALUES (?, ?, ?, ?)",
+      "vault-user",
+      "vault-user",
+      "vault-user@test.local",
+      "x"
+    );
+    await db.run(
+      "INSERT OR REPLACE INTO user_llm_keys (userId, provider, model, cipher, last4) VALUES (?, ?, ?, ?, ?)",
+      "vault-user",
+      "groq",
+      "llama-3.1-8b-instant",
+      encryptKey("gsk-test-vault", "vault-user", "groq"),
+      "…ault"
+    );
+    mockUserId.mockResolvedValue("vault-user");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [
+          { message: { content: JSON.stringify({ scores: {}, verdict: "v" }) } }
+        ]
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const res = await post({
+        slug: "parking-lot",
+        stage: "clarify",
+        payload:
+          "Who are the users, drivers or valets? Is pricing fixed at entry or computed at exit?"
+      });
+      const data = await res.json();
+      expect(data.feedback.provider).toBe("llm");
+      expect(data.feedback.engine).toBe("Groq llama-3.1-8b-instant · your key");
+      expect(fetchMock).toHaveBeenCalled();
+      // Vault key reached the provider, never the response.
+      expect(JSON.stringify(data)).not.toContain("gsk-test-vault");
+    } finally {
+      mockUserId.mockResolvedValue(null);
+    }
   });
 });

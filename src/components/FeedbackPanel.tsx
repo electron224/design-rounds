@@ -34,6 +34,13 @@ export default function FeedbackPanel({
           Check your key/model in AI settings, then resubmit.
         </p>
       )}
+      {safe.provider === "static" && !safe.llmError && (
+        <p className="rounded-md border border-dashed border-indigo-300 p-2 text-xs text-zinc-600 dark:border-indigo-800 dark:text-zinc-400">
+          You&apos;re on the static rubric — solid checklists, but no AI
+          reasoning. Add your own API key (AI → Use my key above) for
+          line-by-line reviews.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         {Object.entries(safe.scores).map(([k, v]) => (
           <span

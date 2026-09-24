@@ -65,4 +65,41 @@ describe("AiSettings", () => {
     fireEvent.click(screen.getByText("Test"));
     expect(await screen.findByText(/key works/)).toBeInTheDocument();
   });
+
+  it("saves to the server vault for logged-in accounts", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.endsWith("/api/keys") && !init?.method) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ saved: false })
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          saved: true,
+          provider: "groq",
+          model: "llama-3.1-8b-instant",
+          last4: "…-key"
+        })
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AiSettings />);
+    // Vault probe resolves → logged-in, browser copy stays untouched.
+    fireEvent.click(screen.getByText("Use my key"));
+    expect(await screen.findByText(/save to server/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByTitle("Provider"), {
+      target: { value: "groq" }
+    });
+    fireEvent.change(screen.getByPlaceholderText(/re-enter to change/i), {
+      target: { value: "gsk-test-key" }
+    });
+    fireEvent.click(screen.getByText(/save to server/i));
+    expect(await screen.findByText(/AI: Groq.*server/)).toBeInTheDocument();
+    expect(window.localStorage.getItem("lld_ai_config")).toBeNull();
+    const posted = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
+    expect(posted).toBeTruthy();
+    expect(JSON.parse(String(posted![1]!.body))).toMatchObject({ provider: "groq" });
+  });
 });

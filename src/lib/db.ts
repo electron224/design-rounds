@@ -63,6 +63,15 @@ const SQLITE_SCHEMA = `
     expiresAt TEXT NOT NULL,
     FOREIGN KEY (userId) REFERENCES users(id)
   );
+  CREATE TABLE IF NOT EXISTS user_llm_keys (
+    userId TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    cipher TEXT NOT NULL,
+    last4 TEXT NOT NULL,
+    updatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (userId) REFERENCES users(id)
+  );
 `;
 
 const PG_SCHEMA = `
@@ -98,6 +107,15 @@ const PG_SCHEMA = `
     token TEXT PRIMARY KEY,
     userId TEXT NOT NULL,
     expiresAt TEXT NOT NULL,
+    FOREIGN KEY (userId) REFERENCES users(id)
+  );
+  CREATE TABLE IF NOT EXISTS user_llm_keys (
+    userId TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    cipher TEXT NOT NULL,
+    last4 TEXT NOT NULL,
+    updatedAt TIMESTAMPTZ DEFAULT now(),
     FOREIGN KEY (userId) REFERENCES users(id)
   );
 `;

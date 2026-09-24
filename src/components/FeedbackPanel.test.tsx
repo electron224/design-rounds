@@ -97,4 +97,36 @@ describe("FeedbackPanel", () => {
     );
     expect(screen.getByText(/AI review failed \(LLM 400\)/)).toBeInTheDocument();
   });
+
+  it("nudges toward a key on plain static feedback, not on AI reviews", () => {
+    const base = {
+      scores: {},
+      strengths: [] as string[],
+      issues: [] as never[],
+      itemVerdicts: [] as never[],
+      optimizations: [] as string[],
+      patternSuggestions: [] as string[],
+      resources: [] as never[],
+      verdict: "v"
+    };
+    render(<FeedbackPanel feedback={{ ...base, provider: "static" }} />);
+    expect(screen.getByText(/static rubric.*no AI reasoning/i)).toBeInTheDocument();
+
+    cleanup();
+    render(
+      <FeedbackPanel
+        feedback={{ ...base, provider: "llm", engine: "Groq x · your key" }}
+      />
+    );
+    expect(screen.queryByText(/no AI reasoning/i)).not.toBeInTheDocument();
+
+    cleanup();
+    render(
+      <FeedbackPanel
+        feedback={{ ...base, provider: "static", llmError: "LLM 400" }}
+      />
+    );
+    // Failed-review banner owns this case — no double nudge.
+    expect(screen.queryByText(/no AI reasoning/i)).not.toBeInTheDocument();
+  });
 });

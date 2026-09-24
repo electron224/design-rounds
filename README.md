@@ -19,9 +19,12 @@ platform owner's key or the candidate's own key:
 
 - **Your own key (works on any hosted deploy):** open any practice page →
   **AI: static rubric → Use my key** → pick provider (OpenAI, Gemini,
-  OpenRouter, Groq, DeepSeek) + model → paste key → Save. The key lives only
-  in your browser (localStorage), rides along with each grading request over
-  HTTPS, and is never stored server-side. Clear it on shared machines.
+  OpenRouter, Groq, DeepSeek) + model → paste key → Save. Guests keep the
+  key in their browser only (localStorage); it rides along with each grading
+  request over HTTPS and is never stored server-side. **Logged-in accounts**
+  save to the server vault instead (`/api/keys`, AES-256-GCM via
+  `KEYVAULT_SECRET`, write-only UI) — the browser then sends nothing per
+  review. Clear browser keys on shared machines.
 - **Owner key:** server-wide `LLM_API_KEY` (+ optional `LLM_MODEL` /
   `LLM_BASE_URL`) for any OpenAI-compatible provider, or free local Ollama
   (`LLM_BASE_URL=http://localhost:11434/v1`, no key needed). See `.env.example`.
