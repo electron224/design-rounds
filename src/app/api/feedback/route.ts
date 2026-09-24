@@ -3,6 +3,7 @@ import { z } from "zod";
 import { gradeStage } from "@/lib/llm";
 import type { StageHistory } from "@/lib/prompts";
 import { problemBySlug } from "@/lib/problems";
+import { hldBySlug } from "@/lib/hld";
 import { checkLimit, clientIp, rateLimited } from "@/lib/ratelimit";
 import { getUserId } from "@/lib/auth";
 import { ensureAttempt, getDb, nowSql } from "@/lib/db";
@@ -11,7 +12,17 @@ import { nanoid } from "nanoid";
 
 const Body = z.object({
   slug: z.string(),
-  stage: z.enum(["clarify", "objects", "flow", "code"]),
+  stage: z.enum([
+    "clarify",
+    "objects",
+    "flow",
+    "code",
+    "requirements",
+    "capacity",
+    "api",
+    "diagram",
+    "deepdive"
+  ]),
   payload: z.string().min(1).max(60000),
   attemptId: z.string().optional(),
   timerMin: z.number().int().min(1).max(240).optional(),
@@ -35,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
 
   const { slug, stage, payload, attemptId, timerMin, llm } = parsed.data;
-  const problem = problemBySlug(slug);
+  const problem = problemBySlug(slug) ?? hldBySlug(slug);
   if (!problem)
     return NextResponse.json({ error: "Unknown problem" }, { status: 404 });
 
@@ -103,7 +114,10 @@ export async function POST(req: NextRequest) {
     const db = await getDb();
     const aid = attemptId ?? nanoid();
     const userId = await getUserId().catch(() => null);
-    await ensureAttempt(aid, slug, timerMin ?? problem.timeDefaultMin, userId);
+    const mins =
+      timerMin ??
+      ("timeDefaultMin" in problem ? problem.timeDefaultMin : 45);
+    await ensureAttempt(aid, slug, mins, userId);
     const scores = Object.values(feedback.scores);
     const avg = scores.length
       ? scores.reduce((a, b) => a + b, 0) / scores.length

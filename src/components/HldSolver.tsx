@@ -1,12 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import AiSettings, { loadAiConfig } from "./AiSettings";
+import FeedbackPanel from "./FeedbackPanel";
+import type { StageFeedback } from "@/lib/types";
 import type { HLDProblem } from "@/lib/hld";
 
 const STAGES = ["requirements", "capacity", "api", "diagram", "deepdive"] as const;
 type Stage = (typeof STAGES)[number];
 
-/** Staged interactive solver with localStorage drafts (no server round-trip). */
+/** Staged interactive solver: local drafts + per-stage server review. */
 export default function HldSolver({ problem }: { problem: HLDProblem }) {
   const key = `hld-draft-${problem.slug}`;
   const [stage, setStage] = useState<Stage>("requirements");
@@ -18,6 +22,13 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
     }
   });
   const [rpsGuess, setRpsGuess] = useState("");
+  const [capNote, setCapNote] = useState(() => {
+    try {
+      return localStorage.getItem(key + ":capnote") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [apiText, setApiText] = useState(() => {
     try {
       return localStorage.getItem(key + ":api") ?? "";
@@ -32,8 +43,24 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
       return [];
     }
   });
+  const [answers, setAnswers] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(key + ":answers") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
   const [sel, setSel] = useState<string | null>(null);
   const [done, setDone] = useState<string[]>([]);
+  const [feedbacks, setFeedbacks] = useState<Partial<Record<Stage, StageFeedback>>>({});
+  const [submitting, setSubmitting] = useState<Stage | null>(null);
+  const [attempt, setAttempt] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(key + ":attempt");
+    } catch {
+      return null;
+    }
+  });
 
   const save = (k: string, v: string) => {
     try {
@@ -43,6 +70,81 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
     }
   };
   const markDone = (s: Stage) => setDone((d) => (d.includes(s) ? d : [...d, s]));
+
+  const setAnswer = (i: number, v: string) => {
+    const next = [...answers];
+    next[i] = v;
+    setAnswers(next);
+    save(key + ":answers", JSON.stringify(next));
+  };
+
+  const payloadFor = (s: Stage): string => {
+    switch (s) {
+      case "requirements":
+        return checked.join("\n");
+      case "capacity":
+        return `Peak writes/s estimate: ${rpsGuess}\nReasoning: ${capNote}`;
+      case "api":
+        return apiText;
+      case "diagram":
+        return edges.join("\n");
+      case "deepdive":
+        return problem.deepdives
+          .map((d, i) => `Q: ${d.q}\nA: ${answers[i] ?? ""}`)
+          .join("\n\n");
+    }
+  };
+
+  const submit = async (s: Stage) => {
+    setSubmitting(s);
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: problem.slug,
+          stage: s,
+          payload: payloadFor(s),
+          attemptId: attempt ?? undefined,
+          llm: loadAiConfig() ?? undefined
+        })
+      });
+      const data = await res.json();
+      if (data.feedback)
+        setFeedbacks((f) => ({ ...f, [s]: data.feedback as StageFeedback }));
+      if (data.attemptId) {
+        setAttempt(data.attemptId);
+        save(key + ":attempt", data.attemptId);
+      }
+      markDone(s);
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const reviewButton = (s: Stage, ready: boolean, readyLabel: string) => (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <button
+        onClick={() => void submit(s)}
+        disabled={!ready || submitting === s}
+        className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+      >
+        {submitting === s
+          ? "Grading…"
+          : feedbacks[s]
+            ? "Resubmit for review"
+            : readyLabel}
+      </button>
+      {attempt && feedbacks[s] && (
+        <Link
+          href={`/report/${attempt}`}
+          className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+        >
+          View report →
+        </Link>
+      )}
+    </div>
+  );
 
   const toggleReq = (r: string) => {
     const next = checked.includes(r)
@@ -70,6 +172,17 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
 
   return (
     <div className="rounded-md border bg-white p-4 dark:bg-zinc-900">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <AiSettings />
+        {attempt && (
+          <Link
+            href={`/report/${attempt}`}
+            className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+          >
+            Attempt report →
+          </Link>
+        )}
+      </div>
       <div className="flex flex-wrap gap-1">
         {STAGES.map((s) => (
           <button
@@ -116,6 +229,16 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
               ? `Check all ${problem.requirements.length} to continue`
               : "Requirements locked →"}
           </button>
+          {reviewButton(
+            "requirements",
+            checked.length >= problem.requirements.length,
+            "Submit requirements for review"
+          )}
+          {feedbacks.requirements && (
+            <div className="mt-3">
+              <FeedbackPanel feedback={feedbacks.requirements} />
+            </div>
+          )}
         </div>
       )}
 
@@ -135,6 +258,7 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
               onChange={(e) => setRpsGuess(e.target.value)}
               inputMode="numeric"
               placeholder="e.g. 500"
+              aria-label="Writes per second estimate"
               className="w-32 rounded-md border px-2 py-1 dark:bg-zinc-800"
             />
             <button
@@ -145,6 +269,23 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
               {capOk ? "Capacity nailed →" : "Check estimate"}
             </button>
           </div>
+          <textarea
+            value={capNote}
+            onChange={(e) => {
+              setCapNote(e.target.value);
+              save(key + ":capnote", e.target.value);
+            }}
+            rows={2}
+            placeholder="Reasoning: where do reads go, what breaks first at 10x? (graded too)"
+            aria-label="Capacity reasoning"
+            className="mt-2 w-full rounded-md border px-2 py-1 text-xs dark:bg-zinc-800"
+          />
+          {reviewButton("capacity", capOk, "Submit capacity for review")}
+          {feedbacks.capacity && (
+            <div className="mt-3">
+              <FeedbackPanel feedback={feedbacks.capacity} />
+            </div>
+          )}
         </div>
       )}
 
@@ -178,6 +319,16 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
           >
             APIs sketched →
           </button>
+          {reviewButton(
+            "api",
+            apiText.trim().length > 20,
+            "Submit APIs for review"
+          )}
+          {feedbacks.api && (
+            <div className="mt-3">
+              <FeedbackPanel feedback={feedbacks.api} />
+            </div>
+          )}
         </div>
       )}
 
@@ -224,18 +375,36 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
           >
             Diagram connected →
           </button>
+          {reviewButton(
+            "diagram",
+            edges.length >= problem.flow.length - 1,
+            "Submit diagram for review"
+          )}
+          {feedbacks.diagram && (
+            <div className="mt-3">
+              <FeedbackPanel feedback={feedbacks.diagram} />
+            </div>
+          )}
         </div>
       )}
 
       {stage === "deepdive" && (
         <div className="mt-3 text-sm">
-          <p className="font-semibold">Interviewer twists — answer out loud:</p>
+          <p className="font-semibold">Interviewer twists — write your answer:</p>
           {problem.deepdives.map((d, i) => (
             <details key={i} className="mt-1 rounded border p-2 dark:border-zinc-700">
               <summary className="cursor-pointer font-medium">{d.q}</summary>
               <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
                 Hint: {d.hint}
               </p>
+              <textarea
+                value={answers[i] ?? ""}
+                onChange={(e) => setAnswer(i, e.target.value)}
+                rows={2}
+                placeholder="Decision, what breaks, what you watch…"
+                aria-label={`Answer to twist ${i + 1}`}
+                className="mt-1 w-full rounded-md border px-2 py-1 text-xs dark:bg-zinc-800"
+              />
             </details>
           ))}
           <div className="mt-2 rounded bg-zinc-100 p-2 text-xs dark:bg-zinc-800">
@@ -252,6 +421,16 @@ export default function HldSolver({ problem }: { problem: HLDProblem }) {
           >
             {done.includes("deepdive") ? "Solved ✓ — review again" : "Mark solved 🎉"}
           </button>
+          {reviewButton(
+            "deepdive",
+            answers.some((a) => (a ?? "").trim().length > 10),
+            "Submit deep-dives for review"
+          )}
+          {feedbacks.deepdive && (
+            <div className="mt-3">
+              <FeedbackPanel feedback={feedbacks.deepdive} />
+            </div>
+          )}
         </div>
       )}
     </div>

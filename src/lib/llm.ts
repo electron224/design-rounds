@@ -1,6 +1,13 @@
 import { buildPrompt, type StageHistory } from "./prompts";
 import { sanitizeStageFeedback } from "./safeFeedback";
 import { staticFeedback } from "./feedback";
+import {
+  buildHldPrompt,
+  HLD_STAGES,
+  hldStaticFeedback,
+  type HldStage,
+} from "./hldFeedback";
+import type { HLDProblem } from "./hld";
 import { isValidModel, providerById } from "./providers";
 import type { LLDProblem, Stage, StageFeedback } from "./types";
 
@@ -36,13 +43,22 @@ export function extractJson(raw: string): unknown {
  * 2. Owner env (LLM_API_KEY / LLM_BASE_URL, e.g. local Ollama needs no key).
  * Calls an OpenAI-compatible chat-completions endpoint; any failure falls
  * back to the deterministic static rubric. Keys are never logged or stored.
+ *
+ * HLD problems grade through the same chain with HLD prompts + rubric.
  */
 export async function gradeStage(
-  problem: LLDProblem,
-  stage: Stage,
+  problem: LLDProblem | HLDProblem,
+  stage: Stage | HldStage | string,
   payload: string,
   opts?: { config?: LlmRequestConfig; history?: StageHistory[] }
 ): Promise<StageFeedback> {
+  const isHld = "capacityWorked" in problem;
+  const hldStage: HldStage = (HLD_STAGES as string[]).includes(stage as string)
+    ? (stage as HldStage)
+    : "requirements";
+  const fallbackPatterns = isHld
+    ? (problem as HLDProblem).components.map((c) => c.name)
+    : (problem as LLDProblem).patterns;
   let base: string;
   let model: string;
   let key: string | undefined;
@@ -53,7 +69,9 @@ export async function gradeStage(
     const provider = providerById(cfg.provider);
     const chosen = cfg.model?.trim() ?? "";
     if (!provider || !isValidModel(chosen)) {
-      return staticFeedback(problem, stage, payload);
+      return isHld
+        ? hldStaticFeedback(problem as HLDProblem, hldStage, payload)
+        : staticFeedback(problem as LLDProblem, stage as Stage, payload);
     }
     base = provider.baseUrl;
     model = chosen;
@@ -68,13 +86,28 @@ export async function gradeStage(
     const hasCustomBase =
       (process.env.LLM_BASE_URL ?? "") !== "" &&
       process.env.LLM_BASE_URL !== "https://api.openai.com/v1";
-    if (!key && !hasCustomBase) return staticFeedback(problem, stage, payload);
+    if (!key && !hasCustomBase)
+      return isHld
+        ? hldStaticFeedback(problem as HLDProblem, hldStage, payload)
+        : staticFeedback(problem as LLDProblem, stage as Stage, payload);
     model = process.env.LLM_MODEL ?? "gpt-4o-mini";
     engine = `Owner model ${model}`;
   }
 
   try {
-    const { system, user } = buildPrompt(problem, stage, payload, opts?.history ?? []);
+    const { system, user } = isHld
+      ? buildHldPrompt(
+          problem as HLDProblem,
+          hldStage,
+          payload,
+          opts?.history ?? []
+        )
+      : buildPrompt(
+          problem as LLDProblem,
+          stage as Stage,
+          payload,
+          opts?.history ?? []
+        );
     const headers: Record<string, string> = {
       "Content-Type": "application/json"
     };
@@ -104,7 +137,7 @@ export async function gradeStage(
       ...fb,
       patternSuggestions: fb.patternSuggestions.length
         ? fb.patternSuggestions
-        : [...problem.patterns],
+        : [...fallbackPatterns],
       provider: "llm" as const,
       engine
     };
@@ -116,6 +149,9 @@ export async function gradeStage(
     console.error("[feedback:llm]", message);
     // Surfaced to the candidate too: a failed AI review must not look
     // identical to "no key configured".
-    return { ...staticFeedback(problem, stage, payload), llmError: message };
+    const fb = isHld
+      ? hldStaticFeedback(problem as HLDProblem, hldStage, payload)
+      : staticFeedback(problem as LLDProblem, stage as Stage, payload);
+    return { ...fb, llmError: message };
   }
 }

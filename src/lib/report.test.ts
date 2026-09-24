@@ -116,3 +116,21 @@ describe("buildReport", () => {
     expect(r.coherence?.missingInFlow).toEqual(["CashBox"]);
   });
 });
+
+describe("buildReport HLD", () => {
+  it("scores out of 5 stages when asked", () => {
+    const subs = ["requirements", "capacity", "api", "diagram", "deepdive"].map(
+      (stage) => ({
+        stage,
+        feedback: fb({ Completeness: 4 }),
+        score: 4,
+        createdAt: "2026-01-01"
+      })
+    );
+    const full = buildReport("a9", "url-shortener", subs, null, 5);
+    expect(full.score10).toBe(8);
+    // Same submissions under LLD math would exceed the scale.
+    const partial = buildReport("a9", "url-shortener", subs.slice(0, 4), null, 5);
+    expect(partial.score10).toBe(6.4);
+  });
+});

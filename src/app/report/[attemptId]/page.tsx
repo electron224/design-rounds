@@ -3,13 +3,19 @@ import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
 import { getUserId } from "@/lib/auth";
 import { problemBySlug } from "@/lib/problems";
+import { hldBySlug } from "@/lib/hld";
 import { buildReport } from "@/lib/report";
 
 const STAGE_LABEL: Record<string, string> = {
   clarify: "0 · Clarify",
   objects: "1 · Entities",
   flow: "2 · Flow",
-  code: "3 · Code"
+  code: "3 · Code",
+  requirements: "0 · Requirements",
+  capacity: "1 · Capacity",
+  api: "2 · API",
+  diagram: "3 · Diagram",
+  deepdive: "4 · Deep-dive"
 };
 
 export default async function ReportPage({
@@ -29,7 +35,15 @@ export default async function ReportPage({
     if (userId !== attempt.userId) notFound();
   }
   const problem = problemBySlug(attempt.problemSlug as string);
-  if (!problem) notFound();
+  const hld = problem ? null : hldBySlug(attempt.problemSlug as string);
+  if (!problem && !hld) notFound();
+  const title = problem?.title ?? hld!.title;
+  const slug = problem?.slug ?? hld!.slug;
+  const totalStages = hld ? 5 : 4;
+  const continueHref = hld
+    ? `/hld/${slug}?tab=solve`
+    : `/practice/${slug}?attempt=${attemptId}&t=${attempt.timerMin}`;
+  const nextHref = hld ? "/hld" : "/problems";
 
   const submissions = (await db.all(
     "SELECT stage, feedback, score, createdAt FROM submissions WHERE attemptId = ? ORDER BY createdAt ASC",
@@ -41,7 +55,7 @@ export default async function ReportPage({
   } catch {
     drafts = null;
   }
-  const report = buildReport(attemptId, problem.slug, submissions, drafts);
+  const report = buildReport(attemptId, slug, submissions, drafts, totalStages);
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
@@ -50,7 +64,7 @@ export default async function ReportPage({
       </Link>
       <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{problem.title} — final score</h1>
+          <h1 className="text-2xl font-bold">{title} — final score</h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             Attempt {attempt.status === "finished" ? "finished" : "in progress"} ·{" "}
             {new Date(attempt.updatedAt as string).toLocaleString()}
@@ -58,13 +72,13 @@ export default async function ReportPage({
         </div>
         <div className="flex gap-2">
           <Link
-            href={`/practice/${problem.slug}?attempt=${attemptId}&t=${attempt.timerMin}`}
+            href={continueHref}
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             Keep practicing
           </Link>
           <Link
-            href="/problems"
+            href={nextHref}
             className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
           >
             Next problem
@@ -93,7 +107,7 @@ export default async function ReportPage({
         {report.stages.length > 0 && (
           <>
             <p className="mt-4 text-xs text-zinc-400">
-              {report.stages.length} of 4 stages submitted — unsubmitted stages score zero.
+              {report.stages.length} of {totalStages} stages submitted — unsubmitted stages score zero.
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
             {report.stages.map((s) => (

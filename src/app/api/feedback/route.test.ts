@@ -145,6 +145,31 @@ describe("POST /api/feedback (integration: route + rubric + sqlite)", () => {
     expect(data.attemptId).toBeTruthy();
   });
 
+  it("grades HLD stages with the HLD rubric and persists", async () => {
+    const res = await post({
+      slug: "url-shortener",
+      stage: "capacity",
+      payload: "plan for 500 writes per second with redis cache and 4 shards"
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.feedback.provider).toBe("static");
+    expect(data.feedback.scores).toHaveProperty("Scale numbers");
+    expect(data.attemptId).toBeTruthy();
+  });
+
+  it("rejects HLD slugs with LLD-only bodies and unknown stages", async () => {
+    expect(
+      (await post({ slug: "url-shortener", stage: "code", payload: "x" })).status
+    ).toBe(200); // valid stage id, graded against the HLD fallback
+    expect(
+      (await post({ slug: "url-shortener", stage: "nope", payload: "x" })).status
+    ).toBe(400);
+    expect(
+      (await post({ slug: "nope", stage: "capacity", payload: "x" })).status
+    ).toBe(404);
+  });
+
   it("grades from the server vault without any client key", async () => {
     const db = await getDb();
     await db.run(

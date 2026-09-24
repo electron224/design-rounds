@@ -46,13 +46,15 @@ function parseFeedback(raw: string): StageFeedback | null {
 
 /**
  * Builds the end-of-problem report: score out of 10 plus where to improve.
- * Pure function — the report page and tests share it.
+ * Pure function — the report page and tests share it. totalStages is 4 for
+ * LLD, 5 for HLD; unsubmitted stages always cost.
  */
 export function buildReport(
   attemptId: string,
   problemSlug: string,
   submissions: SubmissionRow[],
-  drafts: Record<string, unknown> | null
+  drafts: Record<string, unknown> | null,
+  totalStages = TOTAL_STAGES
 ): AttemptReport {
   const latest = new Map<string, { feedback: StageFeedback; score: number }>();
   for (const s of submissions) {
@@ -67,7 +69,7 @@ export function buildReport(
   const score10 =
     stages.length > 0
       ? Math.round(
-          (stages.reduce((a, s) => a + s.score, 0) / (TOTAL_STAGES * 5)) * 10 * 10
+          (stages.reduce((a, s) => a + s.score, 0) / (totalStages * 5)) * 10 * 10
         ) / 10
       : null;
 
