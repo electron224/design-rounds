@@ -53,12 +53,18 @@ export default function Home() {
             flow, write the code — then get every stage reviewed against
             SOLID and design patterns, with a timer running.
           </p>
-          <div className="mt-5 flex gap-3">
+          <div className="mt-5 flex flex-wrap gap-3">
             <Link
               href="/problems"
               className="rounded-md bg-paper px-4 py-2 text-sm font-semibold text-ink hover:bg-white"
             >
               Browse 10 problems
+            </Link>
+            <Link
+              href="/hld"
+              className="rounded-md bg-[#7aa2f7] px-4 py-2 text-sm font-semibold text-ink hover:bg-[#9db4f0]"
+            >
+              Try animated HLD →
             </Link>
             <Link
               href="/learn"

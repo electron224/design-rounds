@@ -60,6 +60,9 @@ export default async function RootLayout({
               <Link href="/problems" className="hover:text-indigo-600">
                 Problems
               </Link>
+              <Link href="/hld" className="hover:text-indigo-600">
+                HLD
+              </Link>
               <Link href="/learn" className="hover:text-indigo-600">
                 Learn
               </Link>
@@ -99,7 +102,7 @@ export default async function RootLayout({
         </header>
         <div className="flex-1">{children}</div>
         <footer className="border-t border-zinc-200 bg-white py-4 text-center text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-          An interview room for low-level design — clarify, model, draw, code.
+          An interview room for low-level design — clarify, model, draw, code. Plus animated HLD.
         </footer>
       </body>
     </html>
