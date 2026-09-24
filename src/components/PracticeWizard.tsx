@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Timer from "@/components/Timer";
 import ObjectModeler from "@/components/ObjectModeler";
+import WizardTabs from "@/components/WizardTabs";
 import FlowEditor from "@/components/FlowEditor";
 import Whiteboard from "@/components/Whiteboard";
 import ProjectEditor from "@/components/ProjectEditor";
@@ -59,6 +60,35 @@ export default function PracticeWizard({
   const [elapsed, setElapsed] = useState(0);
   const [expired, setExpired] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [submitCount, setSubmitCount] = useState(0);
+  const stageCardRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const firstSubmit = useRef(true);
+
+  /** Guided attention, never animation for its own sake. */
+  const reveal = (el: HTMLElement | null) => {
+    if (!el || typeof el.scrollIntoView !== "function") return;
+    const reduce =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  };
+
+  const selectStage = (t: Stage) => {
+    setStage(t);
+    reveal(stageCardRef.current);
+  };
+
+  // Newly arrived feedback scrolls into view after commit (Timer pattern:
+  // notify as an effect, never inside the submit handler).
+  useEffect(() => {
+    if (firstSubmit.current) {
+      firstSubmit.current = false;
+      return;
+    }
+    reveal(feedbackRef.current);
+  }, [submitCount]);
 
   const flowText = flowMode === "draw" ? summarizeScene(scene) : flow;
   const coherence = useMemo(
@@ -280,7 +310,10 @@ export default function PracticeWizard({
         })
       });
       const data = await res.json();
-      if (data.feedback) setFeedbacks((f) => ({ ...f, [stage]: data.feedback }));
+      if (data.feedback) {
+        setFeedbacks((f) => ({ ...f, [stage]: data.feedback }));
+        setSubmitCount((c) => c + 1);
+      }
       if (data.attemptId) setAttemptId(data.attemptId);
     } finally {
       setLoading(false);
@@ -296,23 +329,29 @@ export default function PracticeWizard({
         : t === "flow"
           ? "Flow"
           : "Code";
+  const stageIdx = tabs.indexOf(stage);
+  const nextStage = stageIdx < tabs.length - 1 ? tabs[stageIdx + 1] : null;
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-2">
-          {tabs.map((t, i) => (
-            <button
-              key={t}
-              onClick={() => setStage(t)}
-              className={`rounded-md px-3 py-1.5 text-sm font-semibold ${stage === t ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "border bg-white hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800"}`}
-            >
-              {i}. {tabLabel(t)}
-              {feedbacks[t] ? " ✓" : ""}
-            </button>
-          ))}
-        </div>
-        <Timer
+      <div className="sticky top-0 z-10 -mx-1 bg-zinc-50/95 px-1 py-2 backdrop-blur dark:bg-zinc-950/95">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <WizardTabs
+            tabs={tabs.map((t, i) => ({
+              id: t,
+              index: i,
+              label: tabLabel(t),
+              done: Boolean(feedbacks[t])
+            }))}
+            active={stage}
+            onSelect={(id) => selectStage(id as Stage)}
+            next={
+              nextStage && feedbacks[stage]
+                ? { label: tabLabel(nextStage), onNext: () => selectStage(nextStage) }
+                : null
+            }
+          />
+          <Timer
           key={attemptId ?? "pending"}
           minutes={timerMin}
           initialLeft={timeLeft ?? undefined}
@@ -325,6 +364,7 @@ export default function PracticeWizard({
             setElapsed(el);
           }}
         />
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
         <button
@@ -350,7 +390,7 @@ export default function PracticeWizard({
         <p className="mt-4 text-sm text-zinc-500">Loading your attempt…</p>
       ) : (
       <div className="mt-4 space-y-4">
-        <div className="rounded-md border bg-zinc-50 p-4 dark:bg-zinc-900">
+        <div ref={stageCardRef} className="scroll-mt-24 rounded-md border bg-zinc-50 p-4 dark:bg-zinc-900">
           <h2 className="font-semibold">
             {stage === "clarify" && "Stage 0 — Ask before you design"}
             {stage === "objects" && "Stage 1 — Core entities"}
@@ -543,7 +583,17 @@ export default function PracticeWizard({
             </details>
           )}
         </div>
-        <FeedbackPanel feedback={feedbacks[stage] ?? null} />
+        <div ref={feedbackRef} className="scroll-mt-24">
+          <FeedbackPanel feedback={feedbacks[stage] ?? null} />
+        </div>
+        {feedbacks[stage] && nextStage && (
+          <button
+            onClick={() => selectStage(nextStage)}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            Next: {tabLabel(nextStage)} →
+          </button>
+        )}
       </div>
       )}
 
